@@ -1,0 +1,52 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Blitzping UI</title>
+</head>
+<body>
+  <h2>Blitzping Control Panel</h2>
+  <input id="ip" placeholder="Enter server IP" />
+  <button onclick="start()">Start</button>
+  <button onclick="stop()">Stop</button>
+  <p id="status"></p>
+  <h3>Hop-by-Hop Analysis</h3>
+  <input id="trace-ip" placeholder="Enter server IP for traceroute" />
+  <button onclick="runTraceroute()">Run Traceroute</button>
+  <pre id="trace-output" style="background:#eee; padding:10px;"></pre>
+  
+  <script>
+    async function start() {
+      const ip = document.getElementById("ip").value;
+      const res = await fetch("/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ip })
+      });
+      const data = await res.json();
+      document.getElementById("status").textContent = data.status || data.error;
+    }
+
+    async function stop() {
+      const res = await fetch("/stop", { method: "POST" });
+      const data = await res.json();
+      document.getElementById("status").textContent = data.status || data.error;
+    }
+
+    async function runTraceroute() {
+  const ip = document.getElementById("trace-ip").value;
+  const outputBox = document.getElementById("trace-output");
+  outputBox.textContent = "Running traceroute...";
+
+  const res = await fetch("/traceroute", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ip })
+  });
+
+  const data = await res.json();
+  outputBox.textContent = data.output || data.error;
+}
+  </script>
+</body>
+</html>
