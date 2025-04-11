@@ -10,6 +10,7 @@
   <button onclick="start()">Start</button>
   <button onclick="stop()">Stop</button>
   <p id="status"></p>
+  <p id="output"></p>
   <h3>Hop-by-Hop Analysis</h3>
   <input id="trace-ip" placeholder="Enter server IP for traceroute" />
   <button onclick="runTraceroute()">Run Traceroute</button>
@@ -25,12 +26,15 @@
       });
       const data = await res.json();
       document.getElementById("status").textContent = data.status || data.error;
+      document.getElementById("output").textContent = data.output;
+      console.log(data.output);
     }
-
+    
     async function stop() {
       const res = await fetch("/stop", { method: "POST" });
       const data = await res.json();
       document.getElementById("status").textContent = data.status || data.error;
+      document.getElementById("output").textContent = "";
     }
 
     async function runTraceroute() {

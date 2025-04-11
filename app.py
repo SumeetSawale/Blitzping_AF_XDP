@@ -17,15 +17,22 @@ def start():
         return jsonify({"error": "Missing IP"}), 400
 
     if process is not None:
-        return jsonify({"error": "Already running"}), 400
+        return jsonify({"error": "First stop the previous process"}), 400
 
     process = subprocess.Popen(
         ["sudo", "./Blitzping/out/blitzping", f"--dest-ip={ip}"],
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
+        stderr=subprocess.PIPE,
+        text=True
     )
-    return jsonify({"status": "started"})
 
+    output = []
+    for line in process.stdout:
+        if line.strip().endswith("Locked memory.") :
+            return jsonify({"status": "started", "output": line.strip()})
+        else :
+            return jsonify({"status": "", "output": "Invalid IP"})
+        
 @app.route("/stop", methods=["POST"])
 def stop():
     global process
