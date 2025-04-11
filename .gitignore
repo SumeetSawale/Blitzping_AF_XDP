@@ -52,6 +52,6 @@ Mkfile.old
 dkms.conf
 
 
-Blitzping/out/blitzping
+Blitzping/out/
 mytraceroute/mytraceroute
 venv/

@@ -20,7 +20,7 @@ def start():
         return jsonify({"error": "First stop the previous process"}), 400
 
     process = subprocess.Popen(
-        ["sudo", "./Blitzping/out/blitzping", f"--dest-ip={ip}"],
+        ["sudo", "./Blitzping/out/blitzping", f"--dest-ip={ip} --af-xdp"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True
