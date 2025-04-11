@@ -326,47 +326,124 @@ or specialized network applications.
    sudo ./mytraceroute <IPv4 destination address>
    ```
 
-## Implementation Details
+## Technical background
 
 1. **ICMP (Internet Control Message Protocol)** is used by network devices to send error messages and opera-tional information.
 
 2. The **TTL (Time to Live)** field in an IP packet limits the lifetime of a packet. Every router that forwards the packet decrements this field by 1. If TTL reaches 0, the router sends back an ICMP “Time Exceeded” message.
 
-3. IP address checking using **inet_pton**
-   ```c
-   if (inet_pton(AF_INET, dest_ip, &dest_addr.sin_addr) != 1) {
-        fprintf(stderr, "Invalid IP address: %s\n", dest_ip);
-        return 1;
-   }
-   ```
+## Implementation Details
 
-4. ICMP packet structure
-   ```c
-   struct icmphdr icmp_hdr;
-   icmp_hdr.type = ICMP_ECHO;
-   icmp_hdr.code = 0;
-   icmp_hdr.un.echo.id = getpid();
-   icmp_hdr.un.echo.sequence = ttl;
-   ```
+### 1. Loop Over TTL Values
 
-5. Computing the ICMP checksum
-   ```c
-   unsigned short checksum(void *b, int len) {
-   unsigned short *buf = b;
-   unsigned int sum = 0;
-   unsigned short result;
-   for (sum = 0; len > 1; len -= 2)
-      sum += *buf++;
-   if (len == 1)
-      sum += *(unsigned char*)buf;
-   sum = (sum >> 16) + (sum & 0xFFFF);
-   sum += (sum >> 16);
-   result = ~sum;
-   return result;
-   }
-   ```
-   
-5. Makefile
+We iterate over TTL values from `1` to `MAX_HOPS` to discover each hop along the path.
+
+```c
+for (int ttl = 1; ttl <= MAX_HOPS; ++ttl) {
+```
+
+---
+
+### 2. Set the TTL for the Outgoing Packet
+
+Using `setsockopt`, we assign the current TTL to the IP packet. This controls how far the packet can travel.
+
+```c
+setsockopt(sockfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+```
+
+---
+
+### 3. Construct the ICMP Echo Request Packet
+
+We prepare an ICMP Echo Request packet and fill in its fields. Each request is uniquely identified by the process ID and TTL value.
+
+```c
+char packet[PACKET_SIZE];
+memset(packet, 0, PACKET_SIZE);
+struct icmphdr *icmp = (struct icmphdr *)packet;
+icmp->type = ICMP_ECHO;
+icmp->code = 0;
+icmp->un.echo.id = getpid();
+icmp->un.echo.sequence = ttl;
+icmp->checksum = checksum(packet, PACKET_SIZE);
+```
+
+---
+
+### 4. Record the Send Time
+
+We capture the time before sending the packet to later calculate the round-trip time (RTT).
+
+```c
+struct timeval start, end;
+gettimeofday(&start, NULL);
+```
+
+---
+
+### 5. Send the Packet
+
+We send the ICMP packet to the destination address.
+
+```c
+sendto(sockfd, packet, PACKET_SIZE, 0,
+       (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+```
+
+---
+
+### 6. Wait for a Response
+
+We wait to receive a reply from either an intermediate router (ICMP Time Exceeded) or the destination (ICMP Echo Reply).
+
+```c
+char recv_buf[512];
+struct sockaddr_in reply_addr;
+socklen_t addr_len = sizeof(reply_addr);
+int received = recvfrom(sockfd, recv_buf, sizeof(recv_buf), 0,
+                        (struct sockaddr *)&reply_addr, &addr_len);
+```
+
+---
+
+### 7. Record the Receive Time and Compute RTT
+
+We calculate the round-trip time using the difference between the send and receive timestamps.
+
+```c
+gettimeofday(&end, NULL);
+double rtt = (end.tv_sec - start.tv_sec) * 1000.0 +
+             (end.tv_usec - start.tv_usec) / 1000.0;
+```
+
+---
+
+### 8. Handle the Response
+
+If we received a reply, we extract the IP address and print the hop information. If the destination is reached, we break out of the loop.
+
+```c
+if (received > 0) {
+    char addr_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &(reply_addr.sin_addr), addr_str, sizeof(addr_str));
+    printf("%2d  %s  %.3f ms\n", ttl, addr_str, rtt);
+    if (strcmp(addr_str, dest_ip) == 0)
+        break;
+} else {
+    printf("%2d  *  (timeout)\n", ttl);
+}
+```
+
+---
+
+### 9. Loop Continues
+
+This continues until either the destination responds or `MAX_HOPS` is reached.
+
+---
+
+### 10.Makefile
    ```Makefile
    CC = gcc
    CFLAGS = -Wall -O2
@@ -382,6 +459,7 @@ or specialized network applications.
 	   rm -f $(TARGET)
 
    ```
+---
 
 ## Working example
 
@@ -404,3 +482,4 @@ or specialized network applications.
    10  142.250.238.203  17.247 ms
    11  8.8.8.8  16.076 ms
    ```
+
