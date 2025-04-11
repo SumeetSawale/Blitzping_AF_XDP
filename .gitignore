@@ -54,3 +54,4 @@ dkms.conf
 
 Blitzping/out/blitzping
 mytraceroute/mytraceroute
+venv/
