@@ -483,3 +483,21 @@ This continues until either the destination responds or `MAX_HOPS` is reached.
    11  8.8.8.8  16.076 ms
    ```
 
+## Running the GUI
+
+1. Install the dependencies
+   ```bash
+   pip3 install flask
+   ```
+   or
+   ```bash
+   sudo apt install python3-flask
+   ```
+
+2. Run **app.py** as root
+   ```bash
+   sudo python3 app.py
+   ```
+
+## How the GUI looks
+![GUI Screenshot](GUI.png)

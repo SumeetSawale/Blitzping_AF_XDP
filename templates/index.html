@@ -34,7 +34,7 @@
       const res = await fetch("/stop", { method: "POST" });
       const data = await res.json();
       document.getElementById("status").textContent = data.status || data.error;
-      document.getElementById("output").textContent = "";
+      document.getElementById("output").textContent = data.output;
     }
 
     async function runTraceroute() {
