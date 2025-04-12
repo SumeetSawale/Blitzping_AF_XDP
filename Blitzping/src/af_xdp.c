@@ -24,6 +24,7 @@
 #include <linux/ip.h>
 #include <linux/icmp.h>
 #include <linux/tcp.h>
+#include <linux/udp.h>
 #include <time.h>
 #include <assert.h>
 #include <sched.h>
@@ -48,12 +49,12 @@
 #define NEED_WAKEUP 1               /* Enable notifications when queue space available */
 
 /* Helper macro for error checking */
-#define CHECK_RET(ret, msg) do { \
+#define CHECK_RET(ret, msg) \
     if ((ret) < 0) { \
         perror(msg); \
         exit(EXIT_FAILURE); \
     } \
-} while (0)
+
 
 /* Helper function to set socket options with error handling */
 static int xsk_set_sockopt(int fd, int level, int optname, const void *optval, socklen_t optlen) {
@@ -417,32 +418,138 @@ static bool process_icmp_packet(struct xsk_socket_info *xsk, void *pkt, uint32_t
 }
 
 // Add stub implementations for functions that were called but not defined
-
 static bool process_tcp_packet(struct xsk_socket_info *xsk, void *pkt, uint32_t len, uint64_t addr) {
-    (void)xsk;
-    (void)pkt;
-    (void)len;
-    (void)addr;
-    // Not implemented yet
+    struct ethhdr *eth = (struct ethhdr *)pkt;
+    // Basic checks
+    if (len < sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct tcphdr))
+        return false;
+
+    struct iphdr *iph = (struct iphdr *)(eth + 1);
+    size_t iphdr_len = iph->ihl * 4;
+    if (len < sizeof(struct ethhdr) + iphdr_len + sizeof(struct tcphdr))
+        return false;
+
+    struct tcphdr *tcph = (struct tcphdr *)((uint8_t *)iph + iphdr_len);
+
+    // Simple RST generation for inbound TCP packets
+    if (!tcph->rst && tcph->syn) {
+        // Swap MAC
+        uint8_t tmp_mac[ETH_ALEN];
+        memcpy(tmp_mac, eth->h_source, ETH_ALEN);
+        memcpy(eth->h_source, eth->h_dest, ETH_ALEN);
+        memcpy(eth->h_dest, tmp_mac, ETH_ALEN);
+
+        // Swap IP
+        uint32_t tmp_ip = iph->saddr;
+        iph->saddr = iph->daddr;
+        iph->daddr = tmp_ip;
+
+        // Modify TCP header for RST
+        uint16_t tmp_port = tcph->source;
+        tcph->source = tcph->dest;
+        tcph->dest = tmp_port;
+        tcph->ack_seq = htonl(ntohl(tcph->seq) + 1);
+        tcph->rst = 1;
+        tcph->syn = 0;
+        tcph->ack = 1;
+
+        // Clear TCP checksum (production code should recalc fully)
+        tcph->check = 0;
+
+        // Recalculate IP checksum
+        iph->check = 0;
+        iph->check = ip_checksum(iph, iphdr_len);
+
+        // Send out
+        uint32_t tx_idx = *xsk->tx.producer & xsk->tx.mask;
+        xsk->tx.descs[tx_idx].addr = addr;
+        xsk->tx.descs[tx_idx].len = len;
+        __sync_synchronize();
+        *xsk->tx.producer = *xsk->tx.producer + 1;
+        return true;
+    }
     return false;
 }
 
 static bool process_udp_packet(struct xsk_socket_info *xsk, void *pkt, uint32_t len, uint64_t addr) {
-    (void)xsk;
-    (void)pkt;
-    (void)len;
-    (void)addr;
-    // Not implemented yet
-    return false;
+    struct ethhdr *eth = (struct ethhdr *)pkt;
+    if (len < sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr))
+        return false;
+
+    struct iphdr *iph = (struct iphdr *)(eth + 1);
+    size_t iphdr_len = iph->ihl * 4;
+    if (len < sizeof(struct ethhdr) + iphdr_len + sizeof(struct udphdr))
+        return false;
+
+    struct udphdr *udph = (struct udphdr *)((uint8_t *)iph + iphdr_len);
+
+    // Simple echo (swap MAC/IP/ports) for UDP
+    // Swap MAC
+    uint8_t tmp_mac[ETH_ALEN];
+    memcpy(tmp_mac, eth->h_source, ETH_ALEN);
+    memcpy(eth->h_source, eth->h_dest, ETH_ALEN);
+    memcpy(eth->h_dest, tmp_mac, ETH_ALEN);
+
+    // Swap IP
+    uint32_t tmp_ip = iph->saddr;
+    iph->saddr = iph->daddr;
+    iph->daddr = tmp_ip;
+
+    // Swap UDP ports
+    uint16_t tmp_port = udph->source;
+    udph->source = udph->dest;
+    udph->dest = tmp_port;
+
+    // Recompute IP checksum
+    iph->check = 0;
+    iph->check = ip_checksum(iph, iphdr_len);
+
+    // Send out
+    uint32_t tx_idx = *xsk->tx.producer & xsk->tx.mask;
+    xsk->tx.descs[tx_idx].addr = addr;
+    xsk->tx.descs[tx_idx].len = len;
+    __sync_synchronize();
+    *xsk->tx.producer = *xsk->tx.producer + 1;
+    return true;
 }
 
 static bool process_arp_packet(struct xsk_socket_info *xsk, void *pkt, uint32_t len, uint64_t addr) {
-    (void)xsk;
-    (void)pkt;
-    (void)len;
-    (void)addr;
-    // Not implemented yet
-    return false;
+    // Very basic ARP response logic
+    if (len < sizeof(struct ethhdr) + 28)
+        return false;
+
+    struct ethhdr *eth = (struct ethhdr *)pkt;
+    uint8_t *arp = (uint8_t *)(eth + 1);
+
+    // Only respond to ARP requests
+    uint16_t oper = ntohs(*(uint16_t *)(arp + 6));
+    if (oper != 1)
+        return false;
+
+    // Swap MAC addresses
+    uint8_t tmp_mac[ETH_ALEN];
+    memcpy(tmp_mac, eth->h_source, ETH_ALEN);
+    memcpy(eth->h_source, eth->h_dest, ETH_ALEN);
+    memcpy(eth->h_dest, tmp_mac, ETH_ALEN);
+
+    // Set ARP op to reply
+    *(uint16_t *)(arp + 6) = htons(2);
+
+    // Swap sender/target fields
+    memcpy(arp + 16, arp + 8, 10); 
+    memcpy(arp + 8, eth->h_source, ETH_ALEN);
+
+    // Hardcoded local IP for demonstration
+    uint8_t local_ip[4] = {192, 168, 1, 1};
+    memcpy(arp + 14, local_ip, 4);
+
+    // Send
+    uint32_t tx_idx = *xsk->tx.producer & xsk->tx.mask;
+    xsk->tx.descs[tx_idx].addr = addr;
+    xsk->tx.descs[tx_idx].len = len;
+    __sync_synchronize();
+    *xsk->tx.producer = *xsk->tx.producer + 1;
+    return true;
 }
 
 /* Optimized TCP packet generation for XDP */
